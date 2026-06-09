@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.dependencies import get_current_user
 from app.schemas.auth import AuthResponse, LoginRequest, RegisterRequest, UserResponse
-from app.services.supabase_client import get_supabase
+from app.services.supabase_client import get_supabase, get_supabase_admin
 
 router = APIRouter()
 
@@ -29,6 +29,13 @@ def register(body: RegisterRequest) -> AuthResponse:
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Registration failed. Check your email for confirmation if required.",
         )
+
+    if body.full_name:
+        try:
+            admin = get_supabase_admin()
+            admin.table("profiles").update({"full_name": body.full_name}).eq("id", user.id).execute()
+        except Exception:
+            pass
 
     return AuthResponse(
         access_token=session.access_token,

@@ -1,8 +1,10 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from app.config import settings
 from app.routes import api_router
+from app.services.supabase_retry import is_transient_supabase_error
 
 app = FastAPI(
     title="GDocx API",
@@ -19,6 +21,23 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(_request: Request, exc: Exception) -> JSONResponse:
+    if isinstance(exc, HTTPException):
+        raise exc
+
+    if is_transient_supabase_error(exc):
+        detail = "Database temporarily unavailable. Please retry."
+    else:
+        detail = "An unexpected error occurred. Please retry."
+
+    return JSONResponse(
+        status_code=503,
+        content={"detail": detail},
+    )
+
 
 app.include_router(api_router, prefix="/api")
 

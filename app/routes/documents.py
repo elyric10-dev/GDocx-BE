@@ -1,7 +1,6 @@
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from postgrest.exceptions import APIError
 
 from app.dependencies import get_current_user
 from app.schemas.auth import UserResponse
@@ -17,38 +16,9 @@ from app.schemas.documents import (
     ShareableUser,
 )
 from app.services.supabase_client import get_supabase_admin
+from app.services.supabase_errors import supabase_execute
 
 router = APIRouter()
-
-MIGRATION_FILES = {
-    "profiles": "backend/database/profiles.sql",
-    "documents": "backend/database/documents.sql",
-    "document_shares": "backend/database/document_shares.sql",
-}
-
-
-def _missing_table_message(exc: APIError) -> str:
-    error_text = exc.message or str(exc)
-    for table_name, migration_file in MIGRATION_FILES.items():
-        if f"public.{table_name}" in error_text or f"'{table_name}'" in error_text:
-            return (
-                f"The {table_name} table does not exist yet. "
-                f"Run {migration_file} in the Supabase SQL Editor, then retry."
-            )
-
-    return (
-        f"Required database table not found ({error_text}). "
-        "Run backend/database/schema.sql in the Supabase SQL Editor, then retry."
-    )
-
-
-def _handle_supabase_error(exc: Exception) -> None:
-    if isinstance(exc, APIError) and exc.code == "PGRST205":
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=_missing_table_message(exc),
-        ) from exc
-    raise exc
 
 
 def _parse_document(row: dict[str, Any]) -> DocumentResponse:
@@ -86,15 +56,12 @@ def _get_share_counts(document_ids: list[str]) -> dict[str, int]:
         return {}
 
     supabase = get_supabase_admin()
-    try:
-        response = (
-            supabase.table("document_shares")
-            .select("document_id")
-            .in_("document_id", document_ids)
-            .execute()
-        )
-    except Exception as exc:
-        _handle_supabase_error(exc)
+    response = supabase_execute(
+        lambda: supabase.table("document_shares")
+        .select("document_id")
+        .in_("document_id", document_ids)
+        .execute()
+    )
 
     counts: dict[str, int] = {}
     for row in response.data or []:
@@ -105,15 +72,12 @@ def _get_share_counts(document_ids: list[str]) -> dict[str, int]:
 
 def _get_document_by_id(document_id: str) -> Optional[dict[str, Any]]:
     supabase = get_supabase_admin()
-    try:
-        response = (
-            supabase.table("documents")
-            .select("*")
-            .eq("id", document_id)
-            .execute()
-        )
-    except Exception as exc:
-        _handle_supabase_error(exc)
+    response = supabase_execute(
+        lambda: supabase.table("documents")
+        .select("*")
+        .eq("id", document_id)
+        .execute()
+    )
 
     if not response.data:
         return None
@@ -122,16 +86,13 @@ def _get_document_by_id(document_id: str) -> Optional[dict[str, Any]]:
 
 def _user_has_share_access(document_id: str, user_id: str) -> bool:
     supabase = get_supabase_admin()
-    try:
-        response = (
-            supabase.table("document_shares")
-            .select("id")
-            .eq("document_id", document_id)
-            .eq("user_id", user_id)
-            .execute()
-        )
-    except Exception as exc:
-        _handle_supabase_error(exc)
+    response = supabase_execute(
+        lambda: supabase.table("document_shares")
+        .select("id")
+        .eq("document_id", document_id)
+        .eq("user_id", user_id)
+        .execute()
+    )
 
     return bool(response.data)
 
@@ -171,15 +132,12 @@ def _get_profile_emails(user_ids: list[str]) -> dict[str, str]:
         return {}
 
     supabase = get_supabase_admin()
-    try:
-        response = (
-            supabase.table("profiles")
-            .select("id, email")
-            .in_("id", user_ids)
-            .execute()
-        )
-    except Exception as exc:
-        _handle_supabase_error(exc)
+    response = supabase_execute(
+        lambda: supabase.table("profiles")
+        .select("id, email")
+        .in_("id", user_ids)
+        .execute()
+    )
 
     return {str(row["id"]): row["email"] for row in response.data or []}
 
@@ -197,12 +155,12 @@ def create_document(
     }
 
     try:
-        response = supabase.table("documents").insert(payload).execute()
+        response = supabase_execute(
+            lambda: supabase.table("documents").insert(payload).execute()
+        )
+    except HTTPException:
+        raise
     except Exception as exc:
-        try:
-            _handle_supabase_error(exc)
-        except HTTPException:
-            raise
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(exc),
@@ -222,16 +180,13 @@ def list_documents(
     current_user: UserResponse = Depends(get_current_user),
 ) -> list[DocumentSummary]:
     supabase = get_supabase_admin()
-    try:
-        response = (
-            supabase.table("documents")
-            .select("id, title, owner_id, created_at, updated_at")
-            .eq("owner_id", current_user.id)
-            .order("updated_at", desc=True)
-            .execute()
-        )
-    except Exception as exc:
-        _handle_supabase_error(exc)
+    response = supabase_execute(
+        lambda: supabase.table("documents")
+        .select("id, title, owner_id, created_at, updated_at")
+        .eq("owner_id", current_user.id)
+        .order("updated_at", desc=True)
+        .execute()
+    )
 
     rows = response.data or []
     document_ids = [str(row["id"]) for row in rows]
@@ -248,31 +203,25 @@ def list_shared_documents(
     current_user: UserResponse = Depends(get_current_user),
 ) -> list[DocumentSummary]:
     supabase = get_supabase_admin()
-    try:
-        shares_response = (
-            supabase.table("document_shares")
-            .select("document_id, created_at")
-            .eq("user_id", current_user.id)
-            .order("created_at", desc=True)
-            .execute()
-        )
-    except Exception as exc:
-        _handle_supabase_error(exc)
+    shares_response = supabase_execute(
+        lambda: supabase.table("document_shares")
+        .select("document_id, created_at")
+        .eq("user_id", current_user.id)
+        .order("created_at", desc=True)
+        .execute()
+    )
 
     shares = shares_response.data or []
     if not shares:
         return []
 
     document_ids = [share["document_id"] for share in shares]
-    try:
-        documents_response = (
-            supabase.table("documents")
-            .select("id, title, owner_id, created_at, updated_at")
-            .in_("id", document_ids)
-            .execute()
-        )
-    except Exception as exc:
-        _handle_supabase_error(exc)
+    documents_response = supabase_execute(
+        lambda: supabase.table("documents")
+        .select("id, title, owner_id, created_at, updated_at")
+        .in_("id", document_ids)
+        .execute()
+    )
 
     documents_by_id = {
         str(row["id"]): row for row in documents_response.data or []
@@ -304,16 +253,13 @@ def list_share_users(
     current_user: UserResponse = Depends(get_current_user),
 ) -> list[ShareableUser]:
     supabase = get_supabase_admin()
-    try:
-        response = (
-            supabase.table("profiles")
-            .select("id, email")
-            .neq("id", current_user.id)
-            .order("email")
-            .execute()
-        )
-    except Exception as exc:
-        _handle_supabase_error(exc)
+    response = supabase_execute(
+        lambda: supabase.table("profiles")
+        .select("id, email")
+        .neq("id", current_user.id)
+        .order("email")
+        .execute()
+    )
 
     return [
         ShareableUser(id=str(row["id"]), email=row["email"])
@@ -336,15 +282,12 @@ def share_document(
         )
 
     supabase = get_supabase_admin()
-    try:
-        profile_response = (
-            supabase.table("profiles")
-            .select("id")
-            .eq("id", body.user_id)
-            .execute()
-        )
-    except Exception as exc:
-        _handle_supabase_error(exc)
+    profile_response = supabase_execute(
+        lambda: supabase.table("profiles")
+        .select("id")
+        .eq("id", body.user_id)
+        .execute()
+    )
 
     if not profile_response.data:
         raise HTTPException(
@@ -358,7 +301,11 @@ def share_document(
     }
 
     try:
-        response = supabase.table("document_shares").insert(payload).execute()
+        response = supabase_execute(
+            lambda: supabase.table("document_shares").insert(payload).execute()
+        )
+    except HTTPException:
+        raise
     except Exception as exc:
         error_text = str(exc).lower()
         if "duplicate" in error_text or "unique" in error_text:
@@ -366,10 +313,6 @@ def share_document(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="Document already shared with this user",
             ) from exc
-        try:
-            _handle_supabase_error(exc)
-        except HTTPException:
-            raise
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(exc),
@@ -398,16 +341,13 @@ def list_document_shares(
     _get_owned_document(document_id, current_user.id)
 
     supabase = get_supabase_admin()
-    try:
-        response = (
-            supabase.table("document_shares")
-            .select("id, user_id, created_at")
-            .eq("document_id", document_id)
-            .order("created_at", desc=True)
-            .execute()
-        )
-    except Exception as exc:
-        _handle_supabase_error(exc)
+    response = supabase_execute(
+        lambda: supabase.table("document_shares")
+        .select("id, user_id, created_at")
+        .eq("document_id", document_id)
+        .order("created_at", desc=True)
+        .execute()
+    )
 
     shares = response.data or []
     user_emails = _get_profile_emails([str(row["user_id"]) for row in shares])
@@ -432,16 +372,13 @@ def unshare_document(
     _get_owned_document(document_id, current_user.id)
 
     supabase = get_supabase_admin()
-    try:
-        response = (
-            supabase.table("document_shares")
-            .delete()
-            .eq("document_id", document_id)
-            .eq("user_id", user_id)
-            .execute()
-        )
-    except Exception as exc:
-        _handle_supabase_error(exc)
+    response = supabase_execute(
+        lambda: supabase.table("document_shares")
+        .delete()
+        .eq("document_id", document_id)
+        .eq("user_id", user_id)
+        .execute()
+    )
 
     if not response.data:
         raise HTTPException(
@@ -483,17 +420,15 @@ def update_document(
 
     supabase = get_supabase_admin()
     try:
-        response = (
-            supabase.table("documents")
+        response = supabase_execute(
+            lambda: supabase.table("documents")
             .update(updates)
             .eq("id", document_id)
             .execute()
         )
+    except HTTPException:
+        raise
     except Exception as exc:
-        try:
-            _handle_supabase_error(exc)
-        except HTTPException:
-            raise
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(exc),
