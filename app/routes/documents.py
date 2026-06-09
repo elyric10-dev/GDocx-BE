@@ -192,7 +192,7 @@ def create_document(
     supabase = get_supabase_admin()
     payload = {
         "title": body.title,
-        "content_json": DEFAULT_CONTENT_JSON,
+        "content_json": body.content_json or DEFAULT_CONTENT_JSON,
         "owner_id": current_user.id,
     }
 

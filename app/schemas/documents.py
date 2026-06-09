@@ -11,6 +11,7 @@ DEFAULT_CONTENT_JSON: dict[str, Any] = {
 
 class DocumentCreate(BaseModel):
     title: str = Field(default="Untitled", min_length=1, max_length=500)
+    content_json: Optional[dict[str, Any]] = None
 
 
 class DocumentUpdate(BaseModel):
