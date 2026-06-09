@@ -389,6 +389,30 @@ def unshare_document(
     return {"message": "Share removed"}
 
 
+@router.delete("/{document_id}")
+def delete_document(
+    document_id: str,
+    current_user: UserResponse = Depends(get_current_user),
+) -> dict[str, str]:
+    _get_owned_document(document_id, current_user.id)
+
+    supabase = get_supabase_admin()
+    response = supabase_execute(
+        lambda: supabase.table("documents")
+        .delete()
+        .eq("id", document_id)
+        .execute()
+    )
+
+    if not response.data:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Document not found",
+        )
+
+    return {"message": "Document deleted"}
+
+
 @router.get("/{document_id}", response_model=DocumentResponse)
 def get_document(
     document_id: str,
