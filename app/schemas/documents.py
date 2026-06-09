@@ -24,6 +24,32 @@ class DocumentSummary(BaseModel):
     owner_id: str
     created_at: datetime
     updated_at: datetime
+    owner_email: Optional[str] = None
+    shared_at: Optional[datetime] = None
+    share_count: int = 0
+
+
+class DocumentShareCreate(BaseModel):
+    user_id: str
+
+
+class DocumentShareResponse(BaseModel):
+    id: str
+    document_id: str
+    user_id: str
+    created_at: datetime
+
+
+class DocumentShareDetail(BaseModel):
+    id: str
+    user_id: str
+    user_email: str
+    created_at: datetime
+
+
+class ShareableUser(BaseModel):
+    id: str
+    email: str
 
 
 class DocumentResponse(DocumentSummary):
